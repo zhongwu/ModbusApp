@@ -1,0 +1,165 @@
+﻿@page "/"
+@using System.Globalization
+@using ModbusApp.Services
+@implements IDisposable
+
+<PageTitle>Modbus X-bar Monitor</PageTitle>
+
+<h1>Modbus X-bar Monitor</h1>
+
+<div class="toolbar">
+    <label>Host <input @bind="host" disabled="@connected" style="width:9em" /></label>
+    <label>Port <input type="number" @bind="port" disabled="@connected" /></label>
+    <label>Unit <input type="number" @bind="unitId" disabled="@connected" /></label>
+    <label>Start <input type="number" @bind="start" disabled="@connected" /></label>
+    <label>Count <input type="number" @bind="count" disabled="@connected" /></label>
+    <label>Interval ms <input type="number" @bind="intervalMs" disabled="@connected" /></label>
+    <label>Scale ÷ <input type="number" step="any" @bind="scale" disabled="@connected" /></label>
+    <label>Chart reg # <input type="number" @bind="chartRegister" disabled="@connected" /></label>
+    <label>Subgroup n <input type="number" min="2" max="10" @bind="subgroupSize" disabled="@connected" /></label>
+    <button @onclick="Connect" disabled="@connected">Connect</button>
+    <button @onclick="Disconnect" disabled="@(!connected)">Disconnect</button>
+    <button @onclick="ResetChart">Reset chart</button>
+</div>
+
+<div class="status @(inAlarm ? "alarm" : "")">
+    <strong>@status</strong>
+    @if (inAlarm) { <strong> — ALARM: run rule violated</strong> }
+</div>
+
+<div class="layout">
+    <table>
+        <thead><tr><th>Reg</th><th>Value</th></tr></thead>
+        <tbody>
+            @foreach (var (address, value) in values)
+            {
+                <tr><td>@address</td><td>@value.ToString("N2")</td></tr>
+            }
+        </tbody>
+    </table>
+
+    <svg viewBox="0 0 @W @H" class="chart">
+        <rect x="@L" y="@T" width="@(W - L - R)" height="@(H - T - B)" fill="none" stroke="#bbb" />
+        @if (chart.Means.Count > 0)
+        {
+            var (min, max) = YRange();
+            @if (chart.LimitsLocked)
+            {
+                <line x1="@L" x2="@(W - R)" y1="@Y(chart.CenterLine, min, max)" y2="@Y(chart.CenterLine, min, max)" stroke="green" />
+                <line x1="@L" x2="@(W - R)" y1="@Y(chart.Ucl, min, max)" y2="@Y(chart.Ucl, min, max)" stroke="red" stroke-dasharray="6 4" />
+                <line x1="@L" x2="@(W - R)" y1="@Y(chart.Lcl, min, max)" y2="@Y(chart.Lcl, min, max)" stroke="red" stroke-dasharray="6 4" />
+                <SvgText X="@(W - R + 4)" Y="@Y(chart.Ucl, min, max)" Baseline="middle">UCL @Fmt(chart.Ucl)</SvgText>
+                <SvgText X="@(W - R + 4)" Y="@Y(chart.CenterLine, min, max)" Baseline="middle">CL @Fmt(chart.CenterLine)</SvgText>
+                <SvgText X="@(W - R + 4)" Y="@Y(chart.Lcl, min, max)" Baseline="middle">LCL @Fmt(chart.Lcl)</SvgText>
+            }
+            <polyline fill="none" stroke="steelblue" stroke-width="2" points="@Points(min, max)" />
+            @foreach (var a in chart.Alarms.Select(a => a.Subgroup).Distinct())
+            {
+                <circle cx="@X(a)" cy="@Y(chart.Means[a], min, max)" r="6" fill="red" />
+            }
+            <SvgText X="@L" Y="@(T - 6)">@Fmt(max)</SvgText>
+            <SvgText X="@L" Y="@(H - B + 14)">@Fmt(min)</SvgText>
+        }
+        else
+        {
+            <SvgText X="@(W / 2)" Y="@(H / 2)" Anchor="middle" Fill="#888">Waiting for the first subgroup…</SvgText>
+        }
+    </svg>
+</div>
+
+<h3>Alarm log</h3>
+<ul class="log">
+    @foreach (var line in alarmLog) { <li>@line</li> }
+</ul>
+
+<style>
+    .toolbar { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-bottom: .75rem; }
+    .toolbar input { width: 5em; }
+    .status { padding: .4rem .75rem; background: #e8f5e9; margin-bottom: .75rem; }
+    .status.alarm { background: #ffcdd2; color: #b71c1c; }
+    .layout { display: flex; gap: 1rem; align-items: flex-start; }
+    .layout table { min-width: 12rem; border-collapse: collapse; }
+    .layout td, .layout th { border: 1px solid #ccc; padding: .2rem .6rem; text-align: right; }
+    .chart { flex: 1; max-width: 900px; }
+    .log { max-height: 10rem; overflow: auto; font-family: monospace; }
+</style>
+
+@code {
+    private const double W = 860, H = 340, L = 40, R = 110, T = 20, B = 24;
+
+    private string host = "127.0.0.1";
+    private int port = 1502, unitId = 1, start = 0, count = 4, intervalMs = 200, chartRegister = 0, subgroupSize = 5;
+    private double scale = 1;
+
+    private bool connected, inAlarm;
+    private string status = "Disconnected";
+    private XBarChart chart = new();
+    private List<(int Address, double Value)> values = [];
+    private readonly List<string> alarmLog = [];
+    private CancellationTokenSource? cts;
+
+    private async Task Connect()
+    {
+        cts = new CancellationTokenSource();
+        var ct = cts.Token;
+        using var poller = new ModbusPoller();
+        try
+        {
+            status = $"Connecting to {host}:{port}…";
+            await poller.ConnectAsync(host, port, ct);
+            connected = true;
+            status = "Connected";
+            ResetChart();
+
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(Math.Max(50, intervalMs)));
+            do
+            {
+                var raw = await poller.ReadHoldingAsync((byte)unitId, (ushort)start, (ushort)count);
+                values = raw.Select((r, i) => (start + i, r / scale)).ToList();
+
+                var index = Math.Clamp(chartRegister, 0, raw.Length - 1);
+                foreach (var a in chart.AddSample(raw[index] / scale))
+                {
+                    alarmLog.Insert(0, $"{DateTime.Now:HH:mm:ss}  subgroup {a.Subgroup + 1}: {a.Rule}");
+                    inAlarm = true;
+                }
+                StateHasChanged();
+            } while (await timer.WaitForNextTickAsync(ct));
+        }
+        catch (OperationCanceledException) { status = "Disconnected"; }
+        catch (Exception ex) { status = $"Error: {ex.Message}"; }
+        finally
+        {
+            connected = false;
+            if (!ct.IsCancellationRequested) StateHasChanged();
+        }
+    }
+
+    private void Disconnect() => cts?.Cancel();
+
+    private void ResetChart()
+    {
+        chart = new XBarChart(Math.Clamp(subgroupSize, 2, 10));
+        alarmLog.Clear();
+        inAlarm = false;
+    }
+
+    private (double Min, double Max) YRange()
+    {
+        var all = chart.Means.AsEnumerable();
+        if (chart.LimitsLocked) all = all.Concat([chart.Ucl, chart.Lcl]);
+        var min = all.Min();
+        var max = all.Max();
+        var pad = Math.Max((max - min) * 0.08, 1e-9);
+        return (min - pad, max + pad);
+    }
+
+    private double X(int i) => L + (W - L - R) * (chart.Means.Count <= 1 ? 0.5 : (double)i / (chart.Means.Count - 1));
+    private double Y(double v, double min, double max) => T + (H - T - B) * (1 - (v - min) / (max - min));
+    private static string Fmt(double v) => v.ToString("0.##", CultureInfo.InvariantCulture);
+
+    private string Points(double min, double max) =>
+        string.Join(' ', chart.Means.Select((m, i) => FormattableString.Invariant($"{X(i):0.#},{Y(m, min, max):0.#}")));
+
+    public void Dispose() => cts?.Cancel();
+}

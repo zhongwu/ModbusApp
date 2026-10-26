@@ -1,0 +1,10 @@
+<text x="@X" y="@Y" font-size="11" text-anchor="@Anchor" dominant-baseline="@Baseline" fill="@Fill">@ChildContent</text>
+
+@code {
+    [Parameter] public double X { get; set; }
+    [Parameter] public double Y { get; set; }
+    [Parameter] public string Anchor { get; set; } = "start";
+    [Parameter] public string Baseline { get; set; } = "auto";
+    [Parameter] public string Fill { get; set; } = "currentColor";
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/ModbusApp.Core/ModbusApp.Core.csproj" />
+    <Project Path="src/ModbusApp.Web/ModbusApp.Web.csproj" />
     <Project Path="src/ModbusApp/ModbusApp.csproj" />
   </Folder>
   <Folder Name="/tools/">

@@ -10,8 +10,11 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-    <PackageReference Include="NModbus" Version="3.0.83" />
     <PackageReference Include="ScottPlot.WPF" Version="5.1.59" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ModbusApp.Core\ModbusApp.Core.csproj" />
   </ItemGroup>
 
 </Project>
