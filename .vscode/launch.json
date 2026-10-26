@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug ModbusApp",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/ModbusApp/bin/Debug/net10.0-windows/ModbusApp.dll",
+      "cwd": "${workspaceFolder}/src/ModbusApp",
+      "stopAtEntry": false
+    },
+    {
+      "name": "Debug ModbusSim",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/tools/ModbusSim/bin/Debug/net10.0/ModbusSim.dll",
+      "cwd": "${workspaceFolder}/tools/ModbusSim",
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Sim + App",
+      "configurations": ["Debug ModbusSim", "Debug ModbusApp"],
+      "stopAll": true
+    }
+  ]
+}
